@@ -1,12 +1,9 @@
 import streamlit as st
-import librosa
-import numpy as np
 from pydub import AudioSegment
 import speech_recognition as sr
 from datetime import datetime
 import tempfile
 import os
-import json
 
 class AudioCombiner:
     def __init__(self):
@@ -14,13 +11,13 @@ class AudioCombiner:
         
     def load_and_transcribe(self, audio_file):
         """Load audio file and return transcription"""
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-            # Save uploaded file to temporary file
-            tmp_file.write(audio_file.getvalue())
-            tmp_path = tmp_file.name
-
         try:
-            # Convert audio to WAV format if needed
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                # Save uploaded file to temporary file
+                tmp_file.write(audio_file.getvalue())
+                tmp_path = tmp_file.name
+
+            # Convert audio to WAV format
             audio = AudioSegment.from_file(tmp_path)
             audio.export(tmp_path, format="wav")
             
@@ -39,39 +36,44 @@ class AudioCombiner:
 
     def combine_segments(self, audio1_file, audio2_file, selected_segments):
         """Combine selected audio segments"""
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp1, \
-             tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp2:
-            
-            # Save uploaded files to temporary files
-            tmp1.write(audio1_file.getvalue())
-            tmp2.write(audio2_file.getvalue())
-            
-            # Load audio files
-            audio1 = AudioSegment.from_file(tmp1.name)
-            audio2 = AudioSegment.from_file(tmp2.name)
-            
-            # Combine segments
-            combined = AudioSegment.empty()
-            for segment in selected_segments:
-                source_audio = audio1 if segment['source'] == 'audio1' else audio2
-                start_ms = segment['start'] * 1000  # Convert to milliseconds
-                end_ms = segment['end'] * 1000
-                audio_segment = source_audio[start_ms:end_ms]
-                combined += audio_segment
-            
-            # Clean up temp files
-            os.unlink(tmp1.name)
-            os.unlink(tmp2.name)
-            
-            # Export combined audio
-            output_path = "combined_audio.wav"
-            combined.export(output_path, format="wav")
-            return output_path
+        try:
+            # Create temporary files
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp1, \
+                 tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp2:
+                
+                # Save uploaded files
+                tmp1.write(audio1_file.getvalue())
+                tmp2.write(audio2_file.getvalue())
+                
+                # Load audio files
+                audio1 = AudioSegment.from_file(tmp1.name)
+                audio2 = AudioSegment.from_file(tmp2.name)
+                
+                # Combine segments
+                combined = AudioSegment.empty()
+                for segment in selected_segments:
+                    source_audio = audio1 if segment['source'] == 'audio1' else audio2
+                    start_ms = int(segment['start'] * 1000)  # Convert to milliseconds
+                    end_ms = int(segment['end'] * 1000)
+                    audio_segment = source_audio[start_ms:end_ms]
+                    combined += audio_segment
+                
+                # Clean up temp files
+                os.unlink(tmp1.name)
+                os.unlink(tmp2.name)
+                
+                # Export combined audio
+                output_path = "combined_audio.wav"
+                combined.export(output_path, format="wav")
+                return output_path
+        except Exception as e:
+            st.error(f"Error combining audio: {str(e)}")
+            return None
 
 def main():
     st.title("Audio Analysis Combiner")
     
-    # Initialize session state for storing transcriptions
+    # Initialize session state
     if 'transcriptions' not in st.session_state:
         st.session_state.transcriptions = {'audio1': None, 'audio2': None}
     if 'segments' not in st.session_state:
@@ -81,6 +83,7 @@ def main():
     
     # File uploaders
     col1, col2 = st.columns(2)
+    
     with col1:
         st.subheader("Audio 1")
         audio1_file = st.file_uploader("Upload first audio", type=['wav', 'mp3'])
@@ -104,11 +107,11 @@ def main():
     # Display transcriptions
     if st.session_state.transcriptions['audio1']:
         st.subheader("Audio 1 Transcription")
-        st.text_area("", st.session_state.transcriptions['audio1'], height=200)
+        st.text_area("", st.session_state.transcriptions['audio1'], height=200, key="text1")
     
     if st.session_state.transcriptions['audio2']:
         st.subheader("Audio 2 Transcription")
-        st.text_area("", st.session_state.transcriptions['audio2'], height=200)
+        st.text_area("", st.session_state.transcriptions['audio2'], height=200, key="text2")
     
     # Segment selection
     if st.session_state.transcriptions['audio1'] and st.session_state.transcriptions['audio2']:
@@ -116,10 +119,13 @@ def main():
         
         # Add new segment
         with st.expander("Add New Segment"):
-            source = st.selectbox("Select Audio Source", ['audio1', 'audio2'])
-            text = st.text_area("Enter text segment to match")
-            start_time = st.number_input("Start time (seconds)", min_value=0.0)
-            end_time = st.number_input("End time (seconds)", min_value=start_time)
+            source = st.selectbox("Select Audio Source", ['audio1', 'audio2'], key="source")
+            text = st.text_area("Enter text segment to match", key="text_segment")
+            start_time = st.number_input("Start time (seconds)", min_value=0.0, key="start")
+            end_time = st.number_input("End time (seconds)", 
+                                     min_value=start_time, 
+                                     value=start_time+1.0,
+                                     key="end")
             
             if st.button("Add Segment"):
                 new_segment = {
@@ -132,17 +138,18 @@ def main():
                 st.success("Segment added!")
         
         # Display and manage segments
-        st.subheader("Selected Segments")
-        for i, segment in enumerate(st.session_state.segments):
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.write(f"Segment {i+1}: {segment['text'][:50]}...")
-            with col2:
-                st.write(f"Source: {segment['source']}")
-            with col3:
-                if st.button(f"Remove {i+1}"):
-                    st.session_state.segments.pop(i)
-                    st.experimental_rerun()
+        if st.session_state.segments:
+            st.subheader("Selected Segments")
+            for i, segment in enumerate(st.session_state.segments):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"Segment {i+1}: {segment['text'][:50]}...")
+                with col2:
+                    st.write(f"Source: {segment['source']}")
+                with col3:
+                    if st.button(f"Remove {i+1}", key=f"remove_{i}"):
+                        st.session_state.segments.pop(i)
+                        st.experimental_rerun()
         
         # Combine audio
         if st.session_state.segments and st.button("Combine Selected Segments"):
@@ -153,20 +160,21 @@ def main():
                         audio2_file,
                         st.session_state.segments
                     )
-                    st.success("Audio combined successfully!")
-                    
-                    # Display combined audio
-                    with open(output_path, 'rb') as audio_file:
-                        audio_bytes = audio_file.read()
-                        st.audio(audio_bytes, format='audio/wav')
-                    
-                    # Provide download button
-                    st.download_button(
-                        label="Download Combined Audio",
-                        data=audio_bytes,
-                        file_name="combined_audio.wav",
-                        mime="audio/wav"
-                    )
+                    if output_path:
+                        st.success("Audio combined successfully!")
+                        
+                        # Display combined audio
+                        with open(output_path, 'rb') as audio_file:
+                            audio_bytes = audio_file.read()
+                            st.audio(audio_bytes, format='audio/wav')
+                        
+                        # Provide download button
+                        st.download_button(
+                            label="Download Combined Audio",
+                            data=audio_bytes,
+                            file_name="combined_audio.wav",
+                            mime="audio/wav"
+                        )
             else:
                 st.error("Please upload both audio files first!")
 
