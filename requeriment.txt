@@ -2,4 +2,5 @@ streamlit
 pydub
 SpeechRecognition
 numpy
+python-ffmpeg
 ffmpeg-python
